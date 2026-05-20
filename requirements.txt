@@ -1,12 +1,6 @@
-# Non-Python build dependency (install separately; used by `make pagefind`):
-#   Node.js 18+ with npx — https://nodejs.org/
-# Verify: node -v && npx -v
-
 codespell
 doc8
 docutils
-openai
-python-dotenv
 pip
 pytest
 sphinx
@@ -18,5 +12,3 @@ sphinx-tabs
 sphinx-tamer
 sphinxcontrib-googleanalytics
 sphinxcontrib-mermaid
-tenacity
-timeout-decorator
