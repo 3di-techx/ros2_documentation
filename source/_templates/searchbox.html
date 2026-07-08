@@ -9,9 +9,92 @@
   const js = {{ pagefind_component_js|tojson }};
   const mergeIndex = {{ pagefind_merge_index|tojson }};
   const searchResultsUrl = {{ pagefind_search_results_href|tojson }};
+  const resultMetaFields = {{ pagefind_result_meta_fields|tojson }};
+  const currentDistro = {{ pagefind_current_distro|tojson }};
+  const indexedFacetKeys = String({{ pagefind_filter_keys_csv|tojson }} || '')
+    .split(',')
+    .map((key) => key.trim())
+    .filter(Boolean);
 
   function getPagefindInstance() {
     return window.PagefindComponents?.getInstanceManager?.()?.getInstance?.('default') ?? null;
+  }
+
+  function normalizeSearchFilters(raw) {
+    const out = {};
+    if (!raw || typeof raw !== 'object') {
+      return out;
+    }
+    for (const field of resultMetaFields) {
+      const key = field.key;
+      if (!key) {
+        continue;
+      }
+      let values = raw[key];
+      if (values == null) {
+        const match = Object.keys(raw).find((k) => k.toLowerCase() === key.toLowerCase());
+        values = match != null ? raw[match] : null;
+      }
+      const arr = Array.isArray(values)
+        ? values
+        : (values != null && values !== '' ? [values] : []);
+      const cleaned = arr.map((v) => String(v).trim()).filter(Boolean);
+      if (cleaned.length) {
+        out[key] = cleaned;
+      }
+    }
+    return out;
+  }
+
+  function appendFiltersToParams(params, filters) {
+    for (const field of resultMetaFields) {
+      const key = field.key;
+      const values = filters[key];
+      if (!values?.length) {
+        continue;
+      }
+      values.forEach((value) => {
+        const trimmed = String(value).trim();
+        if (trimmed) {
+          params.append(key, trimmed);
+        }
+      });
+    }
+  }
+
+  function parseFiltersFromUrl(searchString) {
+    const params = new URLSearchParams(searchString ?? window.location.search);
+    const filters = {};
+    for (const field of resultMetaFields) {
+      const key = field.key;
+      if (!key) {
+        continue;
+      }
+      const values = params.getAll(key).map((v) => v.trim()).filter(Boolean);
+      if (values.length) {
+        filters[key] = values;
+      }
+    }
+    return filters;
+  }
+
+  function urlHasFacetParams(searchString) {
+    const params = new URLSearchParams(searchString ?? window.location.search);
+    return resultMetaFields.some((field) => {
+      const key = field.key;
+      return key && params.getAll(key).some((v) => v.trim());
+    });
+  }
+
+  function buildSearchResultsHref(term, searchFilters) {
+    const params = new URLSearchParams();
+    const q = (term || '').trim();
+    if (q) {
+      params.set('q', q);
+    }
+    appendFiltersToParams(params, normalizeSearchFilters(searchFilters));
+    const query = params.toString();
+    return query ? `${searchResultsUrl}?${query}` : searchResultsUrl;
   }
 
   function getModalSearchTerm(e) {
@@ -46,17 +129,15 @@
       }
       e.preventDefault();
       e.stopImmediatePropagation();
-      window.location.href = `${searchResultsUrl}?q=${encodeURIComponent(q)}`;
+      const filters = normalizeSearchFilters(getPagefindInstance()?.searchFilters);
+      window.location.href = buildSearchResultsHref(q, filters);
     },
     true,
   );
-  const resultMetaFields = {{ pagefind_result_meta_fields|tojson }};
   const excerptCache = new Map();
   const pageMetaCache = new Map();
   const decoratedExcerptItems = new WeakSet();
   const metadataDecorationInFlight = new WeakSet();
-  const resultMetaByUrl = new Map();
-  let pagefindResultsMetaListener = false;
 
   function normalizeResultUrl(href) {
     try {
@@ -64,24 +145,6 @@
     } catch {
       return href || '';
     }
-  }
-
-  function lookupIndexedMeta(href) {
-    const full = normalizeResultUrl(href);
-    if (resultMetaByUrl.has(full)) {
-      return resultMetaByUrl.get(full);
-    }
-    try {
-      const path = new URL(full).pathname;
-      for (const [key, meta] of resultMetaByUrl) {
-        if (new URL(key, document.baseURI).pathname === path) {
-          return meta;
-        }
-      }
-    } catch {
-      /* ignore malformed URLs */
-    }
-    return null;
   }
 
   function formatMetaValue(raw) {
@@ -109,40 +172,12 @@
     return words.map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join('');
   }
 
-  function titleCaseMetaValue(value) {
-    const s = String(value || '').trim();
-    if (!s) {
-      return '';
-    }
-    if (/^ROS\s+2$/i.test(s)) {
-      return 'ROS 2';
-    }
-    return s
-      .split(',')
-      .map((segment) =>
-        segment
-          .trim()
-          .split(/\s+/)
-          .map((word) => {
-            if (/^ROS$/i.test(word)) {
-              return 'ROS';
-            }
-            if (/^[A-Z0-9]{2,}$/.test(word)) {
-              return word;
-            }
-            if (/^\d+$/.test(word)) {
-              return word;
-            }
-            return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
-          })
-          .join(' '),
-      )
-      .filter(Boolean)
-      .join(', ');
-  }
-
   function orderedMetaKeys() {
     return resultMetaFields.map((field) => field.key).filter(Boolean);
+  }
+
+  function configuredMetaKeySet() {
+    return new Set(orderedMetaKeys().map((key) => key.toLowerCase()));
   }
 
   function labelForMetaKey(key) {
@@ -151,13 +186,16 @@
     return label || pascalCaseMetaKeyLabel(key);
   }
 
-  function getIndexedMetaValue(indexed, key) {
-    if (indexed[key] != null) {
-      return indexed[key];
+  function getHeadMetaValue(meta, key) {
+    if (!meta || !key) {
+      return null;
+    }
+    if (meta[key] != null) {
+      return meta[key];
     }
     const lower = key.toLowerCase();
-    const match = Object.keys(indexed).find((k) => k.toLowerCase() === lower);
-    return match != null ? indexed[match] : null;
+    const match = Object.keys(meta).find((k) => k.toLowerCase() === lower);
+    return match != null ? meta[match] : null;
   }
 
   async function readPageMetaTags(href) {
@@ -174,17 +212,28 @@
       })
       .then((html) => {
         const parsed = new DOMParser().parseFromString(html, 'text/html');
+        const allowed = configuredMetaKeySet();
         const meta = {};
         parsed.querySelectorAll('head meta[name][content]').forEach((el) => {
           const name = el.getAttribute('name');
           const content = (el.getAttribute('content') || '').trim();
-          if (!name || !content || name === 'pagefind-page-meta') {
+          if (!name || !content) {
+            return;
+          }
+          if (!allowed.has(name.toLowerCase())) {
             return;
           }
           if (!el.hasAttribute('data-pagefind-filter')) {
             return;
           }
-          meta[name] = content;
+          const existing = meta[name];
+          if (existing == null) {
+            meta[name] = content;
+          } else if (Array.isArray(existing)) {
+            existing.push(content);
+          } else {
+            meta[name] = [existing, content];
+          }
         });
         return meta;
       })
@@ -194,11 +243,8 @@
   }
 
   async function metaEntriesForHref(href) {
-    let indexed = lookupIndexedMeta(href);
-    if (!indexed || !Object.keys(indexed).length) {
-      indexed = await readPageMetaTags(href);
-    }
-    if (!indexed || !Object.keys(indexed).length) {
+    const headMeta = await readPageMetaTags(href);
+    if (!headMeta || !Object.keys(headMeta).length) {
       return null;
     }
     const entries = [];
@@ -206,7 +252,7 @@
       if (PAGEFIND_AUTO_META.has(key)) {
         return;
       }
-      const value = formatMetaValue(getIndexedMetaValue(indexed, key));
+      const value = formatMetaValue(getHeadMetaValue(headMeta, key));
       if (!value) {
         return;
       }
@@ -216,26 +262,52 @@
   }
 
   function buildMetadataBlock(entries) {
-    const block = document.createElement('div');
-    block.className = 'pf-result-meta-block';
+    const block = document.createElement('p');
+    block.className = 'pf-result-meta-block ros-page-meta-summary';
 
     entries.forEach(({ key, value }, index) => {
       if (index > 0) {
         block.appendChild(document.createTextNode(' | '));
       }
-      const nameEl = document.createElement('b');
-      nameEl.textContent = `${labelForMetaKey(key)}:`;
+      const nameEl = document.createElement('strong');
+      const label = labelForMetaKey(key);
+      nameEl.textContent = label.endsWith(':') ? label : `${label}:`;
       block.appendChild(nameEl);
-      block.appendChild(document.createTextNode(` ${titleCaseMetaValue(value)}`));
+      block.appendChild(document.createTextNode(` ${formatMetaValue(value)}`));
     });
 
     return block;
+  }
+
+  function metadataBlockNeedsReplace(block) {
+    return !(block instanceof HTMLElement) || block.dataset.rosMetaBuilt !== '1';
+  }
+
+  async function buildMetadataBlockForHref(href) {
+    const metaEntries = await metaEntriesForHref(href);
+    if (!metaEntries) {
+      return null;
+    }
+    return buildMetadataBlock(metaEntries);
+  }
+
+  function insertMetadataBlock(content, block) {
+    block.dataset.rosMetaBuilt = '1';
+    const title = content.querySelector('.pf-result-title');
+    if (title && title.parentNode === content) {
+      title.insertAdjacentElement('afterend', block);
+      return;
+    }
+    content.prepend(block);
   }
 
   function looksLikeIndexedMetaExcerpt(text) {
     const t = (text || '').trim();
     if (!t) {
       return false;
+    }
+    if (/\b(Description|Keywords|Contenttype):/i.test(t)) {
+      return true;
     }
     if (/\w+:\s*[^,|]+,\s*\w+:/.test(t)) {
       return true;
@@ -534,49 +606,9 @@
     return seen;
   }
 
-  async function ingestSearchResults(searchResult) {
-    resultMetaByUrl.clear();
-    if (!searchResult?.results?.length) {
-      return;
-    }
-    const entries = await Promise.all(
-      searchResult.results.map(async (raw) => {
-        try {
-          const data = await raw.data();
-          return [normalizeResultUrl(data.url), data.meta || {}];
-        } catch {
-          return null;
-        }
-      }),
-    );
-    for (const entry of entries) {
-      if (entry) {
-        resultMetaByUrl.set(entry[0], entry[1]);
-      }
-    }
-  }
-
   function refreshResultMetadata() {
     collectAllPfResultLis().forEach((item) => {
       void decorateResultItem(item);
-    });
-  }
-
-  function setupPagefindResultsMetaListener() {
-    const instance = getPagefindInstance();
-    if (!instance || pagefindResultsMetaListener) {
-      return;
-    }
-    pagefindResultsMetaListener = true;
-    instance.on('results', (searchResult) => {
-      void (async () => {
-        await ingestSearchResults(searchResult);
-        scheduleRefreshResultMetadata();
-        requestAnimationFrame(() => {
-          scheduleRefreshResultMetadata();
-          requestAnimationFrame(() => scheduleRefreshResultMetadata());
-        });
-      })();
     });
   }
 
@@ -620,9 +652,6 @@
     if (!(resultItem instanceof HTMLElement)) {
       return;
     }
-    if (resultItem.querySelector('.pf-result-meta-block')) {
-      return;
-    }
 
     const link = resultItem.querySelector('.pf-result-link');
     const content = resultItem.querySelector('.pf-result-content');
@@ -630,10 +659,27 @@
       return;
     }
 
-    const excerpt = content.querySelector('.pf-result-excerpt, .pf-result-preview, p:not(.pf-result-title)');
+    const href = link.getAttribute('href');
+    const existingBlock = resultItem.querySelector('.pf-result-meta-block');
+    if (!metadataDecorationInFlight.has(resultItem) && (!existingBlock || metadataBlockNeedsReplace(existingBlock))) {
+      metadataDecorationInFlight.add(resultItem);
+      try {
+        const block = await buildMetadataBlockForHref(href);
+        if (block) {
+          existingBlock?.remove();
+          insertMetadataBlock(content, block);
+        }
+      } finally {
+        metadataDecorationInFlight.delete(resultItem);
+      }
+    }
+
+    const excerpt = content.querySelector(
+      '.pf-result-excerpt, .pf-result-preview, p:not(.pf-result-title):not(.pf-result-meta-block)',
+    );
     if (excerpt && !decoratedExcerptItems.has(resultItem) && excerpt.dataset.articleBodyExcerpt !== '1') {
       decoratedExcerptItems.add(resultItem);
-      const resolved = await readArticleBodyExcerpt(link.getAttribute('href'));
+      const resolved = await readArticleBodyExcerpt(href);
       const current = (excerpt.textContent || '').replace(/\s+/g, ' ').trim();
       if (resolved) {
         excerpt.textContent = resolved;
@@ -644,31 +690,6 @@
         excerpt.textContent = trimTo150(current);
       }
       excerpt.dataset.articleBodyExcerpt = '1';
-    }
-
-    if (resultItem.querySelector('.pf-result-meta-block')) {
-      return;
-    }
-    if (metadataDecorationInFlight.has(resultItem)) {
-      return;
-    }
-    metadataDecorationInFlight.add(resultItem);
-
-    try {
-      const metaEntries = await metaEntriesForHref(link.getAttribute('href'));
-      if (!metaEntries || resultItem.querySelector('.pf-result-meta-block')) {
-        return;
-      }
-
-      const block = buildMetadataBlock(metaEntries);
-      const title = content.querySelector('.pf-result-title');
-      if (title && title.parentNode === content) {
-        title.insertAdjacentElement('afterend', block);
-      } else {
-        content.appendChild(block);
-      }
-    } finally {
-      metadataDecorationInFlight.delete(resultItem);
     }
   }
 
@@ -698,21 +719,59 @@
     });
   }
 
+  function distributionFacetAvailable() {
+    if (!currentDistro) {
+      return false;
+    }
+    if (!isConfiguredFacetKey('distribution')) {
+      return false;
+    }
+    return indexedFacetKeys.some((key) => key.toLowerCase() === 'distribution');
+  }
+
+  function mergeDefaultDistributionFilter(filters) {
+    const merged = { ...filters };
+    if (distributionFacetAvailable() && !merged.distribution?.length) {
+      merged.distribution = [currentDistro];
+    }
+    return merged;
+  }
+
+  function applyDefaultDistributionFilter() {
+    const instance = getPagefindInstance();
+    if (!instance || !distributionFacetAvailable()) {
+      return;
+    }
+    if (document.querySelector('#ros-search-page') && urlHasFacetParams()) {
+      return;
+    }
+    instance.triggerFilter('distribution', [currentDistro]);
+  }
+
   function applySearchQueryFromUrl() {
     const root = document.querySelector('#ros-search-page');
     if (!root) {
       return;
     }
-    const raw = new URLSearchParams(window.location.search).get('q');
-    const term = (raw || '').trim();
-    if (!term) {
-      return;
-    }
+    const params = new URLSearchParams(window.location.search);
+    const term = (params.get('q') || '').trim();
+    const urlFilters = parseFiltersFromUrl();
     const instance = getPagefindInstance();
     if (!instance) {
       return;
     }
-    instance.triggerSearch(term);
+    const filters = mergeDefaultDistributionFilter(urlFilters);
+    const hasFilters = Object.keys(filters).length > 0;
+    if (!term && !hasFilters) {
+      return;
+    }
+    if (term) {
+      instance.triggerSearchWithFilters(term, filters);
+      return;
+    }
+    if (hasFilters) {
+      instance.triggerFilters(filters);
+    }
   }
 
   try {
@@ -724,9 +783,9 @@
       }
       instance.pagefindOptions.mergeIndex = mergeIndex;
     }
-    setupPagefindResultsMetaListener();
     setupFacetPaneCustomization();
     setupResultMetadataRendering();
+    applyDefaultDistributionFilter();
     applySearchQueryFromUrl();
   } catch (err) {
     console.warn('Pagefind UI unavailable until Pagefind CLI is run on the build output:', err);

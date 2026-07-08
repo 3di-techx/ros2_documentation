@@ -68,6 +68,11 @@ def _facet_key_set(app) -> set[str]:
     return {field['key'] for field in _parse_result_meta_fields(app)}
 
 
+def _current_distro_from_config(app) -> str:
+    """Build-time distro for the current Sphinx target (``macros['DISTRO']``)."""
+    return str((getattr(app.config, 'macros', {}) or {}).get('DISTRO', 'rolling'))
+
+
 def _facet_filter_keys_for_context(app, env) -> List[str]:
     """Configured facet keys that appear in at least one document's ``.. meta::``, in dict order."""
     corpus = set(_union_meta_keys(env))
@@ -78,18 +83,8 @@ def _facet_filter_keys_for_context(app, env) -> List[str]:
     return out
 
 
-def _pagefind_data_meta_attr(values: Dict[str, str]) -> str:
-    """Single data-pagefind-meta attribute value with repeated keys for multi-values."""
-    parts: List[str] = []
-    for key in sorted(values.keys()):
-        for value in split_meta_values(values.get(key, '')):
-            parts.append(f'{key}:{value}')
-    inner = ', '.join(parts)
-    return html.escape(inner, quote=True)
-
-
 def _seo_and_filter_metas(app, values: Dict[str, str]) -> str:
-    """One <meta> per value; ``data-pagefind-filter`` only for ``pagefind_result_meta_order`` keys."""
+    """One <meta> per value; facet keys get Pagefind filter + meta attrs."""
     facet_keys = _facet_key_set(app)
     lines: List[str] = []
     for key in sorted(values.keys()):
@@ -99,7 +94,8 @@ def _seo_and_filter_metas(app, values: Dict[str, str]) -> str:
             if key in facet_keys:
                 lines.append(
                     f'<meta name="{esc_name}" content="{esc_val}" '
-                    f'data-pagefind-filter="{esc_name}[content]">'
+                    f'data-pagefind-filter="{esc_name}[content]" '
+                    f'data-pagefind-meta="{esc_name}[content]">'
                 )
             else:
                 lines.append(f'<meta name="{esc_name}" content="{esc_val}">')
@@ -230,10 +226,10 @@ def _html_page_context(
     facet_keys_ordered = _facet_filter_keys_for_context(app, app.env)
     filter_csv = ','.join(facet_keys_ordered)
     result_meta_fields = _parse_result_meta_fields(app)
+    current_distro = _current_distro_from_config(app)
 
     empty = {
         'pagefind_seo_filter_metas': '',
-        'pagefind_data_meta_attr': '',
         'pagefind_bundle_prefix': './pagefind/',
         'pagefind_component_css': './pagefind/pagefind-component-ui.css',
         'pagefind_component_js': './pagefind/pagefind-component-ui.js',
@@ -241,6 +237,7 @@ def _html_page_context(
         'pagefind_filter_keys_csv': filter_csv,
         'pagefind_result_meta_fields': result_meta_fields,
         'pagefind_search_results_href': 'search.html',
+        'pagefind_current_distro': current_distro,
     }
     context.update(empty)
 
@@ -249,11 +246,10 @@ def _html_page_context(
     if not templatename.endswith('.html'):
         return
 
-    default_distro = (getattr(app.config, 'macros', {}) or {}).get('DISTRO', 'rolling')
+    default_distro = current_distro
     values = _resolved_page_meta(app, doctree)
 
     seo_filters = _seo_and_filter_metas(app, values)
-    data_attr = _pagefind_data_meta_attr(values)
     css_href, js_href = _pagefind_component_urls(app, pagename)
     bundle_prefix = _pagefind_bundle_prefix(app, pagename)
 
@@ -264,7 +260,6 @@ def _html_page_context(
     )
     merge = _merge_index_entries(app, merge_distro)
     context['pagefind_seo_filter_metas'] = seo_filters
-    context['pagefind_data_meta_attr'] = data_attr
     context['pagefind_bundle_prefix'] = bundle_prefix
     context['pagefind_component_css'] = css_href
     context['pagefind_component_js'] = js_href

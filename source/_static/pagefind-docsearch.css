@@ -151,8 +151,11 @@ dialog.pf-modal .pf-result-meta-block {
 }
 
 .ros2-pagefind-search .pf-result-meta-block b,
+.ros2-pagefind-search .pf-result-meta-block strong,
 #ros-search-page .pf-result-meta-block b,
-dialog.pf-modal .pf-result-meta-block b {
+#ros-search-page .pf-result-meta-block strong,
+dialog.pf-modal .pf-result-meta-block b,
+dialog.pf-modal .pf-result-meta-block strong {
   color: #495057 !important;
   font-weight: 600 !important;
 }

@@ -92,12 +92,17 @@ extensions = [
     'ros_related_packages',
     'ros_related_articles',
     'short_description',
+    'pagefind_config',
     'pagefind_meta',
     'showmeta',
 ]
 
-# pagefind search index configuration.
+# Pagefind search integration (Sphinx build + browser UI).
+# Consumed by plugins/pagefind_meta.py and source/_templates/searchbox.html.
+# CLI options (exclude_selectors) and search_result_meta live in pagefind.yml.
+from pagefind_config import load_search_result_meta_order
 
+# Optional: merge remote package doc indexes at search time (Component UI).
 pagefind_merge_enabled = False
 pagefind_merge_package_pkgs = []
 pagefind_merge_index_base = 'https://docs.ros.org'
@@ -105,24 +110,8 @@ pagefind_merge_index_overrides = {}
 pagefind_merge_filter_per_pkg = None
 pagefind_merge_index_weight_per_pkg = None
 
-# Pagefind search UI (modal + /search.html): result metadata lines and facet sidebar.
-# Dict keys = .. meta:: field names; values = display labels.
-# Order here is facet dropdown order and result-meta line order (allowlist).
-# Only listed keys are indexed as facets; keys must exist on at least one page in the build.
-# Other meta (e.g. description, keywords) stays SEO-only and does not appear in the facet sidebar.
-
-pagefind_result_meta_order = {
-    'product': 'Product',
-    'distribution': 'Distribution',
-    'area': 'Area',
-    'capability': 'Capability',
-    'community': 'Community',
-    'installation': 'Installation',
-    'framework': 'Framework',
-    'tool': 'Tools',
-    'contentType': 'Content type',
-    'experience': 'Level',
-}
+# Search result metadata + facet allowlist (order and labels). Edit pagefind.yml.
+pagefind_result_meta_order = load_search_result_meta_order(os.path.dirname(__file__))
 
 # Intersphinx mapping
 

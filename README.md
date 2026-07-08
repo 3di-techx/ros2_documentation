@@ -107,6 +107,10 @@ Plain `make html` and `make multiversion` do **not** run Pagefind (Node.js is on
 
 This requires **Node.js** (for `npx`). Pin the CLI with `PAGEFIND_VERSION` in the Makefile if needed.
 
+CLI indexing options (including excluding Sphinx `a.headerlink` anchors so search result titles stay clean) are in [`pagefind.yml`](pagefind.yml) at the repo root.
+
+The same file defines **`search_result_meta`**: an ordered map of `.. meta::` field names to display labels for search result cards and the facet sidebar. Sphinx reads this at build time (`plugins/pagefind_config.py`); the Pagefind CLI ignores keys it does not recognize.
+
 The production [Jenkins doc job](https://build.ros.org/job/doc_ros2doc) should run the same `pagefind` step on `build/html` after Sphinx so deployed pages include the search bundle.
 
 

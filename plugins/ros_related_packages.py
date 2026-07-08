@@ -195,6 +195,10 @@ def download_rosdistro_cache(app) -> None:
     try:
         with urllib.request.urlopen(request, timeout=120) as response:
             data = response.read()
+        if os.path.isfile(dest_path):
+            with open(dest_path, 'rb') as handle:
+                if handle.read() == data:
+                    return
         with open(dest_path, 'wb') as handle:
             handle.write(data)
     except (urllib.error.URLError, OSError, TimeoutError) as exc:

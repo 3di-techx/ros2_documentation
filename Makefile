@@ -81,6 +81,7 @@ linkcheck:
 	@echo "Check finished. Report is in $(LINKCHECKDIR)."
 
 serve:
-	sphinx-autobuild --host $(LIVE_HOST) --port $(LIVE_PORT) -c . $(SOURCE) $(OUT)/html
+	sphinx-autobuild --host $(LIVE_HOST) --port $(LIVE_PORT) \
+		--ignore '*/rosdistro_cache/*' -c . $(SOURCE) $(OUT)/html
 
 .PHONY: help Makefile multiversion pagefind test test-tools linkcheck serve lint spellcheck check-dictionaries sort-dictionaries

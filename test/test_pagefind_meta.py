@@ -11,6 +11,7 @@ import pytest
 sys.path.insert(0, 'plugins')
 
 from pagefind_meta import (  # noqa: E402
+    _current_distro_from_config,
     _facet_filter_keys_for_context,
     _parse_result_meta_fields,
     _seo_and_filter_metas,
@@ -77,8 +78,12 @@ def test_seo_and_filter_metas_facet_allowlist() -> None:
     )
     assert 'data-pagefind-filter="product[content]"' in html
     assert 'data-pagefind-filter="area[content]"' in html
+    assert 'data-pagefind-meta="product[content]"' in html
+    assert 'data-pagefind-meta="area[content]"' in html
     assert 'name="description"' in html
     assert 'data-pagefind-filter="description' not in html
+    assert 'data-pagefind-meta="description' not in html
+    assert 'pagefind-page-meta' not in html
 
 
 def test_facet_filter_keys_for_context_order_and_corpus() -> None:
@@ -90,3 +95,13 @@ def test_facet_filter_keys_for_context_order_and_corpus() -> None:
         },
     )
     assert _facet_filter_keys_for_context(app, env) == ['product', 'area']
+
+
+def test_current_distro_from_config_uses_macros_distro() -> None:
+    app = SimpleNamespace(config=SimpleNamespace(macros={'DISTRO': 'humble'}))
+    assert _current_distro_from_config(app) == 'humble'
+
+
+def test_current_distro_from_config_defaults_to_rolling() -> None:
+    app = SimpleNamespace(config=SimpleNamespace(macros={}))
+    assert _current_distro_from_config(app) == 'rolling'
